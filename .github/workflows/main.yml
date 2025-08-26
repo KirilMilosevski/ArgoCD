@@ -1,71 +1,64 @@
-name: Update Helm image tag (self-hosted)
+# .github/workflows/build-and-bump.yml
+name: Build image and bump Helm tag
 
 on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - "student-stack/values.yaml"
   workflow_dispatch: {}
 
 permissions:
   contents: write
-
-concurrency:
-  group: helm-image-bump
-  cancel-in-progress: false
+  packages: write
 
 jobs:
-  bump:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute tag
+        id: meta
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Login Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: kiril011/student-api:${{ steps.meta.outputs.tag }}
+
+  bump-helm:
+    needs: build-and-push
     runs-on: [self-hosted, linux]
     env:
-      IMAGE_REPO: kiril011/student-api
       VALUES_FILE: student-stack/values.yaml
-
+      IMAGE_REPO:  kiril011/student-api
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install jq & yq locally (no sudo)
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Install yq (local)
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64 -o "$RUNNER_TEMP/bin/jq"
           curl -fsSL https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 -o "$RUNNER_TEMP/bin/yq"
-          chmod +x "$RUNNER_TEMP/bin/jq" "$RUNNER_TEMP/bin/yq"
+          chmod +x "$RUNNER_TEMP/bin/yq"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-
-      - name: Determine latest Docker Hub tag
-        id: latest
+      - name: Update values.yaml
         run: |
-          echo "Fetching latest tag for ${IMAGE_REPO}…"
-          TAG=$(curl -fsSL "https://hub.docker.com/v2/repositories/${IMAGE_REPO}/tags?page_size=50&ordering=last_updated" \
-            | jq -r '.results[].name' | grep -v '^latest$' | head -n1)
-          [ -n "$TAG" ] || { echo "No tag found"; exit 1; }
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Latest tag: $TAG"
-
-      - name: Show current values.yaml image fields
-        run: |
-          echo "Repo: $(yq '.image.repository' ${VALUES_FILE})"
-          echo "Tag : $(yq '.image.tag' ${VALUES_FILE})"
-
-      - name: Update values.yaml if tag changed
-        run: |
-          NEW_TAG='${{ steps.latest.outputs.tag }}'
-          CUR_TAG=$(yq '.image.tag' "${VALUES_FILE}")
-          yq -i '.image.repository = env(IMAGE_REPO)' "${VALUES_FILE}"
-          if [ "$CUR_TAG" = "$NEW_TAG" ]; then
-            echo "No change needed."
-            exit 0
-          fi
-          yq -i ".image.tag = \"$NEW_TAG\"" "${VALUES_FILE}"
-          git --no-pager diff -- ${VALUES_FILE} || true
-
+          yq -i '.image.repository = env(IMAGE_REPO)' "$VALUES_FILE"
+          yq -i '.image.tag = "${{ needs.build-and-push.outputs.tag }}"' "$VALUES_FILE"
+          git --no-pager diff -- "$VALUES_FILE" || true
       - name: Commit & push
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "${VALUES_FILE}"
-          if git diff --staged --quiet; then
-            echo "Nothing to commit"; exit 0
-          fi
-          git commit -m "[skip ci] chore(helm): bump image tag to ${{ steps.latest.outputs.tag }}"
+          git add "$VALUES_FILE"
+          git commit -m "[skip ci] chore(helm): bump image tag to ${{ needs.build-and-push.outputs.tag }}" || exit 0
           git pull --rebase
           git push
