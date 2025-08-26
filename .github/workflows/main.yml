@@ -2,8 +2,6 @@ name: Update Helm image tag (self-hosted)
 
 on:
   workflow_dispatch: {}
-  schedule:
-    - cron: "0 * * * *"  # hourly; remove if you only want manual runs
 
 permissions:
   contents: write
