@@ -86,15 +86,3 @@ WHAT IT DOES:
 REQUIRED REPO SECRETS:
 - DOCKERHUB_USERNAME
 - DOCKERHUB_TOKEN (Docker Hub access token)
-
-RUN IT:
-- Manually: Actions -> "Retag latest image and bump Helm tag" -> Run workflow
-- Or wait for the scheduled run (hourly by default).
-
-VERIFY:
-  # New commit in repo updating student-stack/values.yaml
-  argocd app history student-api
-  argocd app get student-api --refresh
-  kubectl -n student-api get deploy student-api-student-stack     -o jsonpath='{.spec.template.spec.containers[0].image}{"
-"}'
-  # Expect: kiril011/student-api:<timestamp>
