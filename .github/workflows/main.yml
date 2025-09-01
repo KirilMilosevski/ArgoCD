@@ -3,17 +3,12 @@ name: Retag latest image and bump Helm tag
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "0 * * * *"   # hourly; remove if you only want manual runs
+    - cron: ""   # hourly; remove if you want manual only
 
 permissions:
   contents: write
 
-env:
-  IMAGE_REPO: kiril011/student-api        # <-- change if needed
-  VALUES_FILE: student-stack/values.yaml
-
 jobs:
-  # 1) Retag Docker Hub :latest to a unique, immutable tag (no Dockerfile needed)
   retag:
     runs-on: ubuntu-latest
     outputs:
@@ -35,28 +30,32 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Verify :latest exists
-        run: docker buildx imagetools inspect ${IMAGE_REPO}:latest >/dev/null
+        env:
+          IMAGE_REPO: kiril011/student-api   # <-- change if needed
+        run: docker buildx imagetools inspect "$IMAGE_REPO:latest" >/dev/null
 
-      - name: Retag :latest -> :${{ steps.meta.outputs.new_tag }}
+      - name: Retag :latest -> :$NEW_TAG
+        env:
+          IMAGE_REPO: kiril011/student-api
+          NEW_TAG: ${{ steps.meta.outputs.new_tag }}
         run: |
           docker buildx imagetools create \
-            -t ${IMAGE_REPO}:${{ steps.meta.outputs.new_tag }} \
-            ${IMAGE_REPO}:latest
+            -t "$IMAGE_REPO:$NEW_TAG" \
+            "$IMAGE_REPO:latest"
 
       - name: Show new tag digest
-        run: docker buildx imagetools inspect ${IMAGE_REPO}:${{ steps.meta.outputs.new_tag }}
+        env:
+          IMAGE_REPO: kiril011/student-api
+          NEW_TAG: ${{ steps.meta.outputs.new_tag }}
+        run: docker buildx imagetools inspect "$IMAGE_REPO:$NEW_TAG"
 
-  # 2) Bump Helm values to the new immutable tag (runs on your self-hosted runner)
   bump-helm:
     needs: retag
     runs-on: [self-hosted, linux]
-    env:
-      NEW_TAG:    ${{ needs.retag.outputs.new_tag }}
-      IMAGE_REPO: ${{ env.IMAGE_REPO }}
-      VALUES_FILE: ${{ env.VALUES_FILE }}
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
 
       - name: Install yq (local)
         run: |
@@ -66,16 +65,21 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Update values.yaml with new tag
+        env:
+          VALUES_FILE: student-stack/values.yaml
+          IMAGE_REPO:  kiril011/student-api    # <-- change if needed
+          NEW_TAG:     ${{ needs.retag.outputs.new_tag }}
         run: |
           yq -i '.image.repository = env(IMAGE_REPO)' "$VALUES_FILE"
           yq -i '.image.tag        = env(NEW_TAG)'    "$VALUES_FILE"
+          echo "---- diff ----"
           git --no-pager diff -- "$VALUES_FILE" || true
 
       - name: Commit & push
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$VALUES_FILE"
-          git commit -m "[skip ci] chore(helm): bump image tag to ${NEW_TAG}" || exit 0
+          git add student-stack/values.yaml
+          git commit -m "[skip ci] chore(helm): bump image tag to $NEW_TAG" || exit 0
           git pull --rebase
           git push
