@@ -2,8 +2,6 @@ name: Retag latest image and bump Helm tag
 
 on:
   workflow_dispatch: {}
-  schedule:
-    - cron: ""   # hourly; remove if you want manual only
 
 permissions:
   contents: write
