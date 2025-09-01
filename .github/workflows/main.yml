@@ -53,7 +53,7 @@ jobs:
     env:
       NEW_TAG:    ${{ needs.retag.outputs.new_tag }}
       IMAGE_REPO: ${{ env.IMAGE_REPO }}
-      VALUES_FILE:${{ env.VALUES_FILE }}
+      VALUES_FILE: ${{ env.VALUES_FILE }}
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
